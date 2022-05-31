@@ -70,6 +70,29 @@ type RegistrySourceProvider struct {
 	invalidator *sourceInvalidator
 }
 
+type OGAnnotationSourceProvider struct {
+	sp cache.SourceWithInvalidate
+}
+
+func NewOGAnnotationSourceProvider(sp cache.SourceWithInvalidate) *OGAnnotationSourceProvider {
+	return &OGAnnotationSourceProvider{
+		sp: sp,
+	}
+}
+
+func (o *OGAnnotationSourceProvider) Sources(namespaces ...string) map[cache.SourceKey]cache.Source {
+	resolutionNamespaces := o.CheckOGAnnotation(namespaces...)
+	return o.sp.Sources(resolutionNamespaces...)
+}
+
+func (o *OGAnnotationSourceProvider) Invalidate(key cache.SourceKey) {
+	o.sp.Invalidate(key)
+}
+
+func (o *OGAnnotationSourceProvider) CheckOGAnnotation(namespaces ...string) []string {
+	return []string{namespaces[0]}
+}
+
 func SourceProviderFromRegistryClientProvider(rcp RegistryClientProvider, logger logrus.StdLogger) *RegistrySourceProvider {
 	return &RegistrySourceProvider{
 		rcp:    rcp,
