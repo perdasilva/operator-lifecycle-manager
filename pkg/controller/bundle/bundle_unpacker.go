@@ -1,9 +1,11 @@
 package bundle
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"html/template"
 	"strings"
 	"time"
 
@@ -15,20 +17,20 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8slabels "k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	listersbatchv1 "k8s.io/client-go/listers/batch/v1"
 	listerscorev1 "k8s.io/client-go/listers/core/v1"
 	listersrbacv1 "k8s.io/client-go/listers/rbac/v1"
+	"k8s.io/utils/pointer"
+	"sigs.k8s.io/yaml"
 
 	"github.com/operator-framework/api/pkg/operators/reference"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	listersoperatorsv1alpha1 "github.com/operator-framework/operator-lifecycle-manager/pkg/api/client/listers/operators/v1alpha1"
 	"github.com/operator-framework/operator-lifecycle-manager/pkg/controller/install"
 	"github.com/operator-framework/operator-lifecycle-manager/pkg/controller/registry/resolver/projection"
-	"github.com/operator-framework/operator-lifecycle-manager/pkg/controller/security"
 )
 
 const (
@@ -86,117 +88,20 @@ func newBundleUnpackResult(lookup *operatorsv1alpha1.BundleLookup) *BundleUnpack
 	}
 }
 
-func (c *ConfigMapUnpacker) job(cmRef *corev1.ObjectReference, bundlePath string, secrets []corev1.LocalObjectReference, annotationUnpackTimeout time.Duration) *batchv1.Job {
-	job := &batchv1.Job{
-		Spec: batchv1.JobSpec{
-			//ttlSecondsAfterFinished: 0 // can use in the future to not have to clean up job
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: cmRef.Name,
-				},
-				Spec: corev1.PodSpec{
-					// With restartPolicy = "OnFailure" when the spec.backoffLimit is reached, the job controller will delete all
-					// the job's pods to stop them from crashlooping forever.
-					// By setting restartPolicy = "Never" the pods don't get cleaned up since they're not running after a failure.
-					// Keeping the pods around after failures helps in inspecting the logs of a failed bundle unpack job.
-					// See: https://kubernetes.io/docs/concepts/workloads/controllers/job/#pod-backoff-failure-policy
-					RestartPolicy:    corev1.RestartPolicyNever,
-					ImagePullSecrets: secrets,
-					Containers: []corev1.Container{
-						{
-							Name:  "extract",
-							Image: c.opmImage,
-							Command: []string{"opm", "alpha", "bundle", "extract",
-								"-m", "/bundle/",
-								"-n", cmRef.Namespace,
-								"-c", cmRef.Name,
-								"-z",
-							},
-							Env: []corev1.EnvVar{
-								{
-									Name:  configmap.EnvContainerImage,
-									Value: bundlePath,
-								},
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "bundle", // Expected bundle content mount
-									MountPath: "/bundle",
-								},
-							},
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("10m"),
-									corev1.ResourceMemory: resource.MustParse("50Mi"),
-								},
-							},
-						},
-					},
-					InitContainers: []corev1.Container{
-						{
-							Name:    "util",
-							Image:   c.utilImage,
-							Command: []string{"/bin/cp", "-Rv", "/bin/cpb", "/util/cpb"}, // Copy tooling for the bundle container to use
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "util",
-									MountPath: "/util",
-								},
-							},
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("10m"),
-									corev1.ResourceMemory: resource.MustParse("50Mi"),
-								},
-							},
-						},
-						{
-							Name:            "pull",
-							Image:           bundlePath,
-							ImagePullPolicy: "Always",
-							Command:         []string{"/util/cpb", "/bundle"}, // Copy bundle content to its mount
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "bundle",
-									MountPath: "/bundle",
-								},
-								{
-									Name:      "util",
-									MountPath: "/util",
-								},
-							},
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("10m"),
-									corev1.ResourceMemory: resource.MustParse("50Mi"),
-								},
-							},
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "bundle", // Used to share bundle content
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-						{
-							Name: "util", // Used to share utils
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-					},
-				},
-			},
-		},
+func (c *ConfigMapUnpacker) job(cmRef *corev1.ObjectReference, bundlePath string, secrets []corev1.LocalObjectReference, annotationUnpackTimeout time.Duration) (*batchv1.Job, error) {
+	job, err := createJobFromTemplate(&jobTemplateValues{
+		Name:       cmRef.Name,
+		Namespace:  cmRef.Namespace,
+		OPMImage:   c.opmImage,
+		UtilImage:  c.utilImage,
+		BundlePath: bundlePath,
+	})
+
+	if err != nil {
+		return nil, err
 	}
 
-	// Apply Pod security
-	security.ApplyPodSpecSecurity(&job.Spec.Template.Spec)
-
-	job.SetNamespace(cmRef.Namespace)
-	job.SetName(cmRef.Name)
+	job.Spec.Template.Spec.ImagePullSecrets = secrets
 	job.SetOwnerReferences([]metav1.OwnerReference{ownerRef(cmRef)})
 
 	// By default the BackoffLimit is set to 6 which with exponential backoff 10s + 20s + 40s ...
@@ -204,31 +109,29 @@ func (c *ConfigMapUnpacker) job(cmRef *corev1.ObjectReference, bundlePath string
 	// We want to fail faster than that when we have repeated failures from the bundle unpack pod
 	// so we set it to 3 which is ~1m of waiting time
 	// See: https://kubernetes.io/docs/concepts/workloads/controllers/job/#pod-backoff-failure-policy
-	backOffLimit := int32(3)
-	job.Spec.BackoffLimit = &backOffLimit
+	job.Spec.BackoffLimit = pointer.Int32(3)
 
 	// Set ActiveDeadlineSeconds as the unpack timeout
 	// Don't set a timeout if it is 0
 	if c.unpackTimeout != time.Duration(0) {
-		t := int64(c.unpackTimeout.Seconds())
-		job.Spec.ActiveDeadlineSeconds = &t
+		job.Spec.ActiveDeadlineSeconds = pointer.Int64(int64(c.unpackTimeout.Seconds()))
 	}
 
 	// Check annotationUnpackTimeout which is the annotation override for the default unpack timeout
 	// A negative timeout means the annotation was unset or malformed so we ignore it
 	if annotationUnpackTimeout < time.Duration(0) {
-		return job
+		return job, nil
 	}
 	// // 0 means no timeout so we unset ActiveDeadlineSeconds
 	if annotationUnpackTimeout == time.Duration(0) {
 		job.Spec.ActiveDeadlineSeconds = nil
-		return job
+		return job, nil
 	}
 
 	timeoutSeconds := int64(annotationUnpackTimeout.Seconds())
 	job.Spec.ActiveDeadlineSeconds = &timeoutSeconds
 
-	return job
+	return job, nil
 }
 
 //go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 . Unpacker
@@ -590,7 +493,10 @@ func (c *ConfigMapUnpacker) ensureConfigmap(csRef *corev1.ObjectReference, name 
 }
 
 func (c *ConfigMapUnpacker) ensureJob(cmRef *corev1.ObjectReference, bundlePath string, secrets []corev1.LocalObjectReference, timeout time.Duration) (job *batchv1.Job, err error) {
-	fresh := c.job(cmRef, bundlePath, secrets, timeout)
+	fresh, err := c.job(cmRef, bundlePath, secrets, timeout)
+	if err != nil {
+		return
+	}
 	job, err = c.jobLister.Jobs(fresh.GetNamespace()).Get(fresh.GetName())
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -737,4 +643,25 @@ func getCondition(job *batchv1.Job, conditionType batchv1.JobConditionType) (con
 		}
 	}
 	return
+}
+
+type jobTemplateValues struct {
+	Name       string
+	Namespace  string
+	OPMImage   string
+	UtilImage  string
+	BundlePath string
+}
+
+func createJobFromTemplate(values *jobTemplateValues) (*batchv1.Job, error) {
+	job := &batchv1.Job{}
+	jobYaml := new(bytes.Buffer)
+	jobTemplate, _ := template.ParseFiles("unpacker_job_template.yaml")
+	if err := jobTemplate.Execute(jobYaml, values); err != nil {
+		return nil, err
+	}
+	if err := yaml.Unmarshal(jobYaml.Bytes(), job); err != nil {
+		return nil, err
+	}
+	return job, nil
 }

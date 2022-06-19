@@ -1,0 +1,96 @@
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  template:
+    metadata:
+      name: {{ .Name }}
+    spec:
+      containers:
+        - command:
+            - opm
+            - alpha
+            - bundle
+            - extract
+            - -m
+            - /bundle/
+            - -n
+            - {{ .Namespace }}
+            - -c
+            - {{ .Name }}
+            - -z
+          env:
+            - name: CONTAINER_IMAGE
+              value: {{ .BundlePath }}
+          image:  {{ .OPMImage }}
+          name: extract
+          resources:
+            requests:
+              cpu: 10m
+              memory: 50Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: false
+          volumeMounts:
+            - mountPath: /bundle
+              name: bundle
+      initContainers:
+        - command:
+            - /bin/cp
+            - -Rv
+            - /bin/cpb
+            - /util/cpb
+          image: {{ .UtilImage }}
+          name: util
+          resources:
+            requests:
+              cpu: 10m
+              memory: 50Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: false
+          volumeMounts:
+            - mountPath: /util
+              name: util
+        - command:
+            - /util/cpb
+            - /bundle
+          image: {{ .BundlePath }}
+          imagePullPolicy: Always
+          name: pull
+          resources:
+            requests:
+              cpu: 10m
+              memory: 50Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: false
+          volumeMounts:
+            - mountPath: /bundle
+              name: bundle
+            - mountPath: /util
+              name: util
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - emptyDir: {}
+          name: bundle
+        - emptyDir: {}
+          name: util
+
