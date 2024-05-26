@@ -74,7 +74,7 @@ KIND_CLUSTER_NAME ?= kind-olmv0
 .DEFAULT_GOAL := build
 
 .PHONY: all
-all: clean test container
+all: test image #HELP Run unit tests and build image
 
 #SECTION Build
 
@@ -99,13 +99,13 @@ build: build-utils $(CMDS)
 # search the code for go:build e2e or go:build experimental_metrics to see where these tags are used
 e2e-build: export GO_BUILD_TAGS += e2e experimental_metrics
 e2e-build: IMAGE_TAG = local
-e2e-build: container
+e2e-build: image
 
-.PHONY: container
-# Set GOOS to linux to build a linux binary for the container
+.PHONY: image
+# Set GOOS to linux to build a linux binary for the image
 # Don't set GOARCH because we want the default host architecture - this is important for developers on MacOS
-container: export GOOS = linux
-container: clean build
+image: export GOOS = linux
+image: clean build
 	docker build -t $(IMAGE_REPO):$(IMAGE_TAG) -f Dockerfile bin
 
 .PHONY: clean
@@ -292,30 +292,6 @@ endif
 ifeq ($(quickstart), true)
 	./scripts/package_quickstart.sh deploy/$(target)/manifests/$(ver) deploy/$(target)/quickstart/olm.yaml deploy/$(target)/quickstart/crds.yaml deploy/$(target)/quickstart/install.sh
 endif
-
-################################
-#  OLM - Install/Uninstall/Run #
-################################
-
-.PHONY: uninstall
-uninstall:
-	@echo Uninstalling OLM:
-	- kubectl delete -f deploy/upstream/quickstart/crds.yaml
-	- kubectl delete -f deploy/upstream/quickstart/olm.yaml
-	- kubectl delete catalogsources.operators.coreos.com
-	- kubectl delete clusterserviceversions.operators.coreos.com
-	- kubectl delete installplans.operators.coreos.com
-	- kubectl delete operatorgroups.operators.coreos.com subscriptions.operators.coreos.com
-	- kubectl delete apiservices.apiregistration.k8s.io v1.packages.operators.coreos.com
-	- kubectl delete ns olm
-	- kubectl delete ns openshift-operator-lifecycle-manager
-	- kubectl delete ns openshift-operators
-	- kubectl delete ns operators
-	- kubectl delete clusterrole.rbac.authorization.k8s.io/aggregate-olm-edit
-	- kubectl delete clusterrole.rbac.authorization.k8s.io/aggregate-olm-view
-	- kubectl delete clusterrole.rbac.authorization.k8s.io/system:controller:operator-lifecycle-manager
-	- kubectl delete clusterroles.rbac.authorization.k8s.io "system:controller:operator-lifecycle-manager"
-	- kubectl delete clusterrolebindings.rbac.authorization.k8s.io "olm-operator-binding-openshift-operator-lifecycle-manager"
 
 .PHONY: FORCE
 FORCE:
