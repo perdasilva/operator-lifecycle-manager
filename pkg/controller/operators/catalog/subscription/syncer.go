@@ -7,6 +7,7 @@ import (
 	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
 	utilclock "k8s.io/utils/clock"
 
@@ -71,9 +72,6 @@ func (s *subscriptionSyncer) Sync(ctx context.Context, event kubestate.ResourceE
 	case kubestate.ResourceUpdated:
 		initial = initial.Update()
 		metrics.UpdateSubsSyncCounterStorage(res)
-	case kubestate.ResourceDeleted:
-		initial = initial.Delete()
-		metrics.DeleteSubsMetric(res)
 	}
 
 	reconciled, err := s.reconcilers.Reconcile(ctx, initial)
@@ -89,18 +87,28 @@ func (s *subscriptionSyncer) Sync(ctx context.Context, event kubestate.ResourceE
 	return nil
 }
 
-func (s *subscriptionSyncer) Notify(event kubestate.ResourceEvent) {
+func (s *subscriptionSyncer) Notify(event types.NamespacedName) {
 	s.notify(event)
 }
 
 // catalogSubscriptionKeys returns the set of explicit subscription keys, cluster-wide, that are possibly affected by catalogs in the given namespace.
-func (s *subscriptionSyncer) catalogSubscriptionKeys(namespace string) ([]string, error) {
-	var keys []string
+func (s *subscriptionSyncer) catalogSubscriptionKeys(namespace string) ([]types.NamespacedName, error) {
+	var cacheKeys []string
 	var err error
 	if namespace == s.globalCatalogNamespace {
-		keys = s.subscriptionCache.ListKeys()
+		cacheKeys = s.subscriptionCache.ListKeys()
 	} else {
-		keys, err = s.subscriptionCache.IndexKeys(cache.NamespaceIndex, namespace)
+		cacheKeys, err = s.subscriptionCache.IndexKeys(cache.NamespaceIndex, namespace)
+	}
+
+	keys := make([]types.NamespacedName, len(cacheKeys))
+	for _, k := range cacheKeys {
+		ns, name, err := cache.SplitMetaNamespaceKey(k)
+		if err != nil {
+			s.logger.Warnf("could not split meta key %q", k)
+			continue
+		}
+		keys = append(keys, types.NamespacedName{Namespace: ns, Name: name})
 	}
 
 	return keys, err
@@ -132,7 +140,7 @@ func (s *subscriptionSyncer) notifyOnCatalog(ctx context.Context, obj interface{
 	logger.Trace("notifing dependent subscriptions")
 	for _, subKey := range dependentKeys {
 		logger.Tracef("notifying subscription %s", subKey)
-		s.Notify(kubestate.NewResourceEvent(kubestate.ResourceUpdated, subKey))
+		s.Notify(subKey)
 	}
 	logger.Trace("dependent subscriptions notified")
 }
@@ -177,9 +185,9 @@ func (s *subscriptionSyncer) notifyOnInstallPlan(ctx context.Context, obj interf
 	// Notify dependent owner Subscriptions
 	owners := ownerutil.GetOwnersByKind(plan, v1alpha1.SubscriptionKind)
 	for _, owner := range owners {
-		subKey := fmt.Sprintf("%s/%s", plan.GetNamespace(), owner.Name)
+		subKey := types.NamespacedName{Namespace: plan.GetNamespace(), Name: owner.Name}
 		logger.Tracef("notifying subscription %s", subKey)
-		s.Notify(kubestate.NewResourceEvent(kubestate.ResourceUpdated, cache.ExplicitKey(subKey)))
+		s.Notify(subKey)
 	}
 }
 
@@ -217,7 +225,7 @@ func newSyncerWithConfig(ctx context.Context, config *syncerConfig) (kubestate.S
 		subscriptionCache: config.subscriptionInformer.GetIndexer(),
 		installPlanLister: config.lister.OperatorsV1alpha1().InstallPlanLister(),
 		sourceProvider:    config.sourceProvider,
-		notify: func(event kubestate.ResourceEvent) {
+		notify: func(event types.NamespacedName) {
 			// Notify Subscriptions by enqueuing to the Subscription queue.
 			config.subscriptionQueue.Add(event)
 		},

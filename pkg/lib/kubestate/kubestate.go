@@ -2,6 +2,7 @@ package kubestate
 
 import (
 	"context"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 type State interface {
@@ -141,8 +142,6 @@ const (
 	ResourceAdded ResourceEventType = "add"
 	// ResourceUpdated tells the operator that a given resources has been updated.
 	ResourceUpdated ResourceEventType = "update"
-	// ResourceDeleted tells the operator that a given resources has been deleted.
-	ResourceDeleted ResourceEventType = "delete"
 )
 
 type ResourceEvent interface {
@@ -171,10 +170,10 @@ func NewResourceEvent(eventType ResourceEventType, resource interface{}) Resourc
 }
 
 type Notifier interface {
-	Notify(event ResourceEvent)
+	Notify(event types.NamespacedName)
 }
 
-type NotifyFunc func(event ResourceEvent)
+type NotifyFunc func(event types.NamespacedName)
 
 // SyncFunc syncs resource events.
 type SyncFunc func(ctx context.Context, event ResourceEvent) error
