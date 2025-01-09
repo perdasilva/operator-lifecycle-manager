@@ -5,8 +5,8 @@ import (
 	"fmt"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -30,8 +30,8 @@ type QueueInformer struct {
 }
 
 // Sync invokes all registered sync handlers in the QueueInformer's chain
-func (q *QueueInformer) Sync(ctx context.Context, event kubestate.ResourceEvent) error {
-	return q.syncer.Sync(ctx, event)
+func (q *QueueInformer) Sync(ctx context.Context, obj client.Object) error {
+	return q.syncer.Sync(ctx, obj)
 }
 
 // Enqueue adds a key to the queue. If obj is a key already it gets added directly.
@@ -131,12 +131,7 @@ type LegacySyncHandler func(obj interface{}) error
 
 // ToSyncer returns the Syncer equivalent of the sync handler.
 func (l LegacySyncHandler) ToSyncer() kubestate.Syncer {
-	return kubestate.SyncFunc(func(ctx context.Context, event kubestate.ResourceEvent) error {
-		switch event.Type() {
-		case kubestate.ResourceAdded, kubestate.ResourceUpdated:
-			return l(event.Resource())
-		default:
-			return errors.Errorf("unexpected resource event type: %s", event.Type())
-		}
+	return kubestate.SyncFunc(func(ctx context.Context, obj client.Object) error {
+		return l(obj)
 	})
 }

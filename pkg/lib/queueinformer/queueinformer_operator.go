@@ -3,10 +3,10 @@ package queueinformer
 import (
 	"context"
 	"fmt"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sync"
 	"time"
 
-	"github.com/operator-framework/operator-lifecycle-manager/pkg/lib/kubestate"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/types"
@@ -298,10 +298,15 @@ func (o *operator) processNextWorkItem(ctx context.Context, loop *QueueInformer)
 		queue.Forget(item)
 		return true
 	}
-	event := kubestate.NewResourceEvent(kubestate.ResourceUpdated, resource)
+	obj, ok := resource.(client.Object)
+	if !ok {
+		logger.Warn("cached object is not a kubernetes resource (client.Object)")
+		queue.Forget(item)
+		return true
+	}
 
 	// Sync and requeue on error
-	err = loop.Sync(ctx, event)
+	err = loop.Sync(ctx, obj)
 	if requeues := queue.NumRequeues(item); err != nil && requeues < 8 {
 		logger.WithField("requeues", requeues).Trace("requeuing with rate limiting")
 		utilruntime.HandleError(errors.Wrap(err, fmt.Sprintf("sync %q failed", item)))

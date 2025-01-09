@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -47,9 +49,9 @@ func (s *subscriptionSyncer) now() *metav1.Time {
 
 // Sync reconciles Subscription events by invoking a sequence of reconcilers, passing the result of each
 // successful reconciliation as an argument to its successor.
-func (s *subscriptionSyncer) Sync(ctx context.Context, event kubestate.ResourceEvent) error {
+func (s *subscriptionSyncer) Sync(ctx context.Context, obj client.Object) error {
 	res := &v1alpha1.Subscription{}
-	if err := scheme.Convert(event.Resource(), res, nil); err != nil {
+	if err := scheme.Convert(obj, res, nil); err != nil {
 		return err
 	}
 
@@ -58,20 +60,13 @@ func (s *subscriptionSyncer) Sync(ctx context.Context, event kubestate.ResourceE
 	logger := s.logger.WithFields(logrus.Fields{
 		"reconciling": fmt.Sprintf("%T", res),
 		"selflink":    res.GetSelfLink(),
-		"event":       event.Type(),
 	})
 	logger.Info("syncing")
 
 	// Enter initial state based on subscription and event type
 	// TODO: Consider generalizing initial generic add, update, delete transitions in the kubestate package.
 	// 		 Possibly make a resource event aware bridge between Sync and reconciler.
-	initial := NewSubscriptionState(res.DeepCopy())
-	switch event.Type() {
-	case kubestate.ResourceAdded:
-		initial = initial.Add()
-	case kubestate.ResourceUpdated:
-		initial = initial.Update()
-	}
+	initial := NewSubscriptionState(res.DeepCopy()).Update()
 
 	reconciled, err := s.reconcilers.Reconcile(ctx, initial)
 	if err != nil {

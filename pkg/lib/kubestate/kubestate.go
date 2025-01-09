@@ -3,6 +3,7 @@ package kubestate
 import (
 	"context"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type State interface {
@@ -134,41 +135,6 @@ func (r ReconcilerChain) Reconcile(ctx context.Context, in State) (out State, er
 	return
 }
 
-// ResourceEventType tells an operator what kind of event has occurred on a given resource.
-type ResourceEventType string
-
-const (
-	// ResourceAdded tells the operator that a given resources has been added.
-	ResourceAdded ResourceEventType = "add"
-	// ResourceUpdated tells the operator that a given resources has been updated.
-	ResourceUpdated ResourceEventType = "update"
-)
-
-type ResourceEvent interface {
-	Type() ResourceEventType
-	Resource() interface{}
-}
-
-type resourceEvent struct {
-	eventType ResourceEventType
-	resource  interface{}
-}
-
-func (r resourceEvent) Type() ResourceEventType {
-	return r.eventType
-}
-
-func (r resourceEvent) Resource() interface{} {
-	return r.resource
-}
-
-func NewResourceEvent(eventType ResourceEventType, resource interface{}) ResourceEvent {
-	return resourceEvent{
-		eventType: eventType,
-		resource:  resource,
-	}
-}
-
 type Notifier interface {
 	Notify(event types.NamespacedName)
 }
@@ -176,14 +142,14 @@ type Notifier interface {
 type NotifyFunc func(event types.NamespacedName)
 
 // SyncFunc syncs resource events.
-type SyncFunc func(ctx context.Context, event ResourceEvent) error
+type SyncFunc func(ctx context.Context, obj client.Object) error
 
 // Sync lets a sync func implement Syncer.
-func (s SyncFunc) Sync(ctx context.Context, event ResourceEvent) error {
-	return s(ctx, event)
+func (s SyncFunc) Sync(ctx context.Context, obj client.Object) error {
+	return s(ctx, obj)
 }
 
 // Syncer describes something that syncs resource events.
 type Syncer interface {
-	Sync(ctx context.Context, event ResourceEvent) error
+	Sync(ctx context.Context, obj client.Object) error
 }
