@@ -36,7 +36,6 @@ func (q *QueueInformer) Sync(ctx context.Context, event kubestate.ResourceEvent)
 
 // Enqueue adds a key to the queue. If obj is a key already it gets added directly.
 func (q *QueueInformer) Enqueue(item types.NamespacedName) {
-	// Create new resource event and add to queue
 	q.logger.WithField("item", item).Trace("enqueuing item")
 	q.queue.Add(item)
 }

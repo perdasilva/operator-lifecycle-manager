@@ -71,7 +71,6 @@ func (s *subscriptionSyncer) Sync(ctx context.Context, event kubestate.ResourceE
 		initial = initial.Add()
 	case kubestate.ResourceUpdated:
 		initial = initial.Update()
-		metrics.UpdateSubsSyncCounterStorage(res)
 	}
 
 	reconciled, err := s.reconcilers.Reconcile(ctx, initial)
@@ -230,6 +229,23 @@ func newSyncerWithConfig(ctx context.Context, config *syncerConfig) (kubestate.S
 			config.subscriptionQueue.Add(event)
 		},
 	}
+
+	// Add metrics handler to subscription informer
+	// NOTE: This is different from how metrics are handled for other resources (install plan, catalog source, etc.)
+	// which use metrics provider and through the QueueInformer
+	config.subscriptionInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			if sub, ok := newObj.(*v1alpha1.Subscription); ok {
+				metrics.UpdateSubsSyncCounterStorage(sub)
+			}
+		},
+		DeleteFunc: func(obj interface{}) {
+			if sub, ok := obj.(*v1alpha1.Subscription); ok {
+				metrics.DeleteSubsMetric(sub)
+			}
+		},
+	})
 
 	// Build a reconciler chain from the default and configured reconcilers
 	// Default reconcilers should always come first in the chain

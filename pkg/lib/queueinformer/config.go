@@ -41,9 +41,6 @@ func (c *queueInformerConfig) complete() {
 		// Extract indexer from informer if
 		c.indexer = c.informer.GetIndexer()
 	}
-	if c.onDelete != nil {
-		c.onDelete = func(obj interface{}) {}
-	}
 }
 
 // validate returns an error if the config isn't valid.
@@ -67,6 +64,7 @@ func (c *queueInformerConfig) validateQueueInformer() (err error) {
 func defaultConfig() *queueInformerConfig {
 	return &queueInformerConfig{
 		provider: metrics.NewMetricsNil(),
+		onDelete: func(obj interface{}) {},
 		queue: workqueue.NewTypedRateLimitingQueueWithConfig[types.NamespacedName](
 			workqueue.DefaultTypedControllerRateLimiter[types.NamespacedName](),
 			workqueue.TypedRateLimitingQueueConfig[types.NamespacedName]{

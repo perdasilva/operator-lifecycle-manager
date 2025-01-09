@@ -300,7 +300,7 @@ func (o *operator) processNextWorkItem(ctx context.Context, loop *QueueInformer)
 	}
 	event := kubestate.NewResourceEvent(kubestate.ResourceUpdated, resource)
 
-	// Sync and requeue on error (throw out failed deletion syncs)
+	// Sync and requeue on error
 	err = loop.Sync(ctx, event)
 	if requeues := queue.NumRequeues(item); err != nil && requeues < 8 {
 		logger.WithField("requeues", requeues).Trace("requeuing with rate limiting")
